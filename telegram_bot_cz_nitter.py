@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# telegram_bot_cz_nitter.py
 import os, asyncio, json, logging, re
 import aiohttp, feedparser
 from aiohttp import web
 
-# CONFIG (via env vars)
+# =================== CONFIG ===================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TARGET_USERNAME = os.getenv("TARGET_USERNAME", "cz_binance")
@@ -12,6 +11,7 @@ NITTER_INSTANCE = os.getenv("NITTER_INSTANCE", "https://nitter.net")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "15"))  # detik
 STATE_FILE = "state_nitter.json"
 PORT = int(os.getenv("PORT", os.getenv("RENDER_INTERNAL_PORT", "10000")))
+# ==============================================
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cz-bot")
@@ -64,7 +64,7 @@ async def send_to_telegram(session, text):
         async with session.post(url, json=payload, timeout=20) as resp:
             data = await resp.json()
             if not data.get("ok"):
-                logger.warning("Telegram API respon bukan OK: %s", data)
+                logger.warning("Telegram API error: %s", data)
                 return False
             return True
     except Exception as e:
@@ -76,7 +76,7 @@ async def poll_loop(session):
     last_guid = state.get("last_guid")
     sent_guids = state.get("sent_guids", [])
     rss_url = build_rss_url(NITTER_INSTANCE, TARGET_USERNAME)
-    logger.info("Polling RSS %s setiap %s detik", rss_url, POLL_INTERVAL)
+    logger.info("Memantau RSS %s setiap %s detik", rss_url, POLL_INTERVAL)
 
     while True:
         feed = await fetch_rss(session, rss_url)
@@ -90,7 +90,7 @@ async def poll_loop(session):
                 if last_guid is None or (guid != last_guid and guid not in sent_guids):
                     to_send.append((guid, e))
             if to_send:
-                logger.info("Menemukan %d item baru", len(to_send))
+                logger.info("Menemukan %d tweet baru", len(to_send))
                 for guid, entry in to_send:
                     text = format_entry(entry)
                     ok = await send_to_telegram(session, text)
@@ -103,7 +103,6 @@ async def poll_loop(session):
                         save_state(state)
         await asyncio.sleep(POLL_INTERVAL)
 
-# Simple health server for Render + Uptime checks
 async def start_health_server():
     async def health(request):
         return web.Response(text="OK")
@@ -114,20 +113,17 @@ async def start_health_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info("Health server running on port %s", PORT)
-    await asyncio.Event().wait()  # run forever
+    logger.info("Health server aktif di port %s", PORT)
+    await asyncio.Event().wait()
 
 async def main():
     async with aiohttp.ClientSession() as session:
-        poll_task = asyncio.create_task(poll_loop(session))
-        web_task = asyncio.create_task(start_health_server())
-        await asyncio.gather(poll_task, web_task)
+        await asyncio.gather(poll_loop(session), start_health_server())
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Stopped by user")
+        logger.info("Dihentikan oleh user")
     except Exception as e:
         logger.exception("Terminated with error: %s", e)
-
